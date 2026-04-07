@@ -1,0 +1,47 @@
+name: E2E Test
+on:
+  repository_dispatch:
+    types: [pubm-release]
+  workflow_dispatch:
+    inputs:
+      pubm_version:
+        description: "pubm version to test"
+        default: "latest"
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun add pubm@${{ inputs.pubm_version || github.event.client_payload.pubm_version || 'latest' }} @pubm/core@${{ inputs.pubm_version || github.event.client_payload.pubm_version || 'latest' }}
+
+      - name: Set prerelease version
+        run: |
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          VERSION="0.0.1-e2e.${TIMESTAMP}"
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          for PKG in packages/core/package.json packages/utils/package.json; do
+            node -e "
+              const fs = require('fs');
+              const pkg = JSON.parse(fs.readFileSync('${PKG}', 'utf8'));
+              pkg.version = process.env.VERSION;
+              fs.writeFileSync('${PKG}', JSON.stringify(pkg, null, 2));
+            "
+          done
+
+      - name: Publish
+        run: bunx pubm --mode ci --phase publish --any-branch
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify deployment
+        run: |
+          sleep 10
+          npm view @pubm-test/fixed-core@${{ env.VERSION }}
+          npm view @pubm-test/fixed-utils@${{ env.VERSION }}
